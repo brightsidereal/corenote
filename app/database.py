@@ -1,41 +1,32 @@
 from contextlib import contextmanager
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from psycopg2 import pool
+import psycopg
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 from app.config import settings
 
-# connection pool — ป้องกัน connection leak และ handle concurrent requests
-_pool = None
+_pool: ConnectionPool = None
 
-def get_pool():
+def get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
-        _pool = pool.ThreadedConnectionPool(
-            minconn=2,
-            maxconn=10,
-            dsn=settings.database_url,
+        _pool = ConnectionPool(
+            conninfo=settings.database_url,
+            min_size=2,
+            max_size=10,
+            open=True,
         )
     return _pool
 
 @contextmanager
 def get_conn():
-    """Context manager — auto return connection to pool"""
-    p = get_pool()
-    conn = p.getconn()
-    try:
+    with get_pool().connection() as conn:
         yield conn
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        p.putconn(conn)
 
 def init_db():
     with get_conn() as con:
-        cur = con.cursor()
-        cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        con.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
-        cur.execute("""
+        con.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id         TEXT PRIMARY KEY,
                 api_key    TEXT UNIQUE NOT NULL,
@@ -44,10 +35,10 @@ def init_db():
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
 
-        cur.execute("""
+        con.execute("""
             CREATE TABLE IF NOT EXISTS raw_notes (
                 id           TEXT PRIMARY KEY,
                 user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -59,10 +50,10 @@ def init_db():
                 error        TEXT
             )
         """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_raw_notes_user ON raw_notes(user_id)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_raw_notes_status ON raw_notes(status)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_raw_notes_user ON raw_notes(user_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_raw_notes_status ON raw_notes(status)")
 
-        cur.execute("""
+        con.execute("""
             CREATE TABLE IF NOT EXISTS facts (
                 id           TEXT PRIMARY KEY,
                 user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -82,24 +73,19 @@ def init_db():
                 version      INTEGER NOT NULL DEFAULT 1
             )
         """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_user_id ON facts(user_id)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_content_hash ON facts(user_id, content_hash)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(user_id, scope)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_importance ON facts(user_id, importance DESC)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_pinned ON facts(user_id, pinned) WHERE pinned = TRUE")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_facts_user_id ON facts(user_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_facts_content_hash ON facts(user_id, content_hash)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(user_id, scope)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_facts_importance ON facts(user_id, importance DESC)")
 
-        # migrate: เพิ่ม columns ที่อาจยังไม่มีใน DB เก่า
-        for col, definition in [
-            ("email",    "TEXT"),
-            ("updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
-            ("pinned",   "BOOLEAN NOT NULL DEFAULT FALSE"),
-            ("version",  "INTEGER NOT NULL DEFAULT 1"),
-            ("error",    "TEXT"),
+        # migrate existing tables
+        for table, col, definition in [
+            ("users", "email", "TEXT"),
+            ("facts", "updated_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
+            ("facts", "pinned", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("facts", "version", "INTEGER NOT NULL DEFAULT 1"),
+            ("raw_notes", "error", "TEXT"),
         ]:
-            cur.execute(f"""
-                ALTER TABLE {'users' if col == 'email' else 'facts' if col in ('updated_at','pinned','version') else 'raw_notes'}
-                ADD COLUMN IF NOT EXISTS {col} {definition}
-            """)
+            con.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {definition}")
 
         con.commit()
-        cur.close()
