@@ -1,4 +1,5 @@
 import threading
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,8 +13,6 @@ from app.routes import router
 from app.oauth import router as oauth_router
 
 def start_worker():
-    """รัน RQ worker ใน background thread — ใช้ manual loop แทน worker.work()"""
-    import time
     import redis
     from rq import Queue
 
@@ -23,18 +22,13 @@ def start_worker():
 
     while True:
         try:
-            job = queue.fetch_job_ids()
+            job = queue.dequeue()
             if job:
-                # dequeue และ execute ทีละ job
-                job = queue.dequeue()
-                if job:
-                    try:
-                        job.perform()
-                        job.set_status("finished")
-                        log.info("job_done", job_id=job.id)
-                    except Exception as e:
-                        job.set_status("failed")
-                        log.error("job_failed", job_id=job.id, error=str(e))
+                try:
+                    job.perform()
+                    log.info("job_done", job_id=job.id)
+                except Exception as e:
+                    log.error("job_failed", job_id=job.id, error=str(e))
             else:
                 time.sleep(1)
         except Exception as e:
