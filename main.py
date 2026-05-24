@@ -1,3 +1,4 @@
+import threading
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,12 +11,30 @@ from app.middleware import RequestLoggingMiddleware
 from app.routes import router
 from app.oauth import router as oauth_router
 
+def start_worker():
+    """รัน RQ worker ใน background thread"""
+    import redis
+    from rq import Queue
+    from rq.worker import SimpleWorker
+
+    conn = redis.from_url(settings.redis_url)
+    queue = Queue("ingest", connection=conn)
+    worker = SimpleWorker([queue], connection=conn)
+    log.info("worker_started")
+    worker.work()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
     log.info("startup", environment=settings.environment)
     init_db()
     log.info("database_ready")
+
+    # รัน worker ใน background thread
+    worker_thread = threading.Thread(target=start_worker, daemon=True)
+    worker_thread.start()
+    log.info("worker_thread_started")
+
     yield
     log.info("shutdown")
 
@@ -40,7 +59,6 @@ app.add_middleware(
 app.add_exception_handler(CoreNoteError, corenote_error_handler)
 app.add_exception_handler(Exception, generic_error_handler)
 
-# public endpoints — ไม่ต้อง auth
 @app.get("/health")
 def health():
     return {"status": "ok", "version": "1.0.0"}
