@@ -15,6 +15,7 @@ from app.oauth import router as oauth_router
 def start_worker():
     import redis
     from rq import Queue
+    from rq.job import Job
 
     conn = redis.from_url(settings.redis_url)
     queue = Queue("ingest", connection=conn)
@@ -22,13 +23,16 @@ def start_worker():
 
     while True:
         try:
-            job = queue.dequeue()
-            if job:
+            # ดึง job id จาก queue แล้ว fetch และ execute
+            job_id = conn.lpop("rq:queue:ingest")
+            if job_id:
+                job_id = job_id.decode() if isinstance(job_id, bytes) else job_id
+                job = Job.fetch(job_id, connection=conn)
                 try:
                     job.perform()
-                    log.info("job_done", job_id=job.id)
+                    log.info("job_done", job_id=job_id)
                 except Exception as e:
-                    log.error("job_failed", job_id=job.id, error=str(e))
+                    log.error("job_failed", job_id=job_id, error=str(e))
             else:
                 time.sleep(1)
         except Exception as e:
