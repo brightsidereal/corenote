@@ -12,16 +12,34 @@ from app.routes import router
 from app.oauth import router as oauth_router
 
 def start_worker():
-    """รัน RQ worker ใน background thread"""
+    """รัน RQ worker ใน background thread — ใช้ manual loop แทน worker.work()"""
+    import time
     import redis
     from rq import Queue
-    from rq.worker import SimpleWorker
 
     conn = redis.from_url(settings.redis_url)
     queue = Queue("ingest", connection=conn)
-    worker = SimpleWorker([queue], connection=conn)
-    log.info("worker_started")
-    worker.work()
+    log.info("worker_thread_started")
+
+    while True:
+        try:
+            job = queue.fetch_job_ids()
+            if job:
+                # dequeue และ execute ทีละ job
+                job = queue.dequeue()
+                if job:
+                    try:
+                        job.perform()
+                        job.set_status("finished")
+                        log.info("job_done", job_id=job.id)
+                    except Exception as e:
+                        job.set_status("failed")
+                        log.error("job_failed", job_id=job.id, error=str(e))
+            else:
+                time.sleep(1)
+        except Exception as e:
+            log.error("worker_error", error=str(e))
+            time.sleep(5)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -30,10 +48,8 @@ async def lifespan(app: FastAPI):
     init_db()
     log.info("database_ready")
 
-    # รัน worker ใน background thread
     worker_thread = threading.Thread(target=start_worker, daemon=True)
     worker_thread.start()
-    log.info("worker_thread_started")
 
     yield
     log.info("shutdown")
