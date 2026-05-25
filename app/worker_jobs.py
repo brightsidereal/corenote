@@ -7,9 +7,24 @@ from app.consolidator import content_hash, is_duplicate
 from app.graph import add_fact_to_graph
 from app.logger import log
 
+def get_existing_scopes(user_id: str) -> list[str]:
+    """ดึง scopes ที่มีอยู่แล้วของ user"""
+    with get_conn() as con:
+        rows = con.execute(
+            "SELECT DISTINCT scope FROM facts WHERE user_id = %s ORDER BY scope",
+            (user_id,)
+        ).fetchall()
+    return [r[0] for r in rows]
+
 def process_ingest(note: str, user_id: str, raw_note_id: str):
     log.info("process_ingest_start", user_id=user_id, raw_note_id=raw_note_id)
-    facts = extract_facts(note)
+
+    # ดึง existing scopes ก่อน extract
+    existing_scopes = get_existing_scopes(user_id)
+    log.info("existing_scopes", count=len(existing_scopes), scopes=existing_scopes)
+
+    # extract พร้อม context ของ scopes เดิม
+    facts = extract_facts(note, existing_scopes=existing_scopes)
     saved, skipped = [], []
     now = datetime.now(timezone.utc).isoformat()
 

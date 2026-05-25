@@ -21,6 +21,12 @@ For each fact also estimate:
 - importance: 0.0-1.0
 - scope: short path like /work/q4 or /idea/product or /personal/health
 
+IMPORTANT — scope assignment rules:
+- If existing_scopes are provided, prefer reusing an existing scope when the content is related
+- Only create a new scope if the content is clearly different from all existing scopes
+- Use the most specific existing scope that matches
+- Format: /category/topic (e.g. /work/q4, /personal/health, /idea/product)
+
 Return ONLY valid JSON, no markdown, no explanation:
 {
   "facts": [
@@ -38,13 +44,19 @@ Return ONLY valid JSON, no markdown, no explanation:
     wait=wait_exponential(multiplier=1, min=2, max=30),
     stop=stop_after_attempt(3),
 )
-def extract_facts(note: str) -> list[dict]:
+def extract_facts(note: str, existing_scopes: list[str] = None) -> list[dict]:
     log.info("extract_facts", note_length=len(note))
+
+    scope_context = ""
+    if existing_scopes:
+        scope_context = f"\n\nexisting_scopes (prefer reusing these if content is related):\n" + \
+                       "\n".join(f"- {s}" for s in existing_scopes)
+
     response = client.chat.completions.create(
         model=settings.openai_model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f'Note:\n"""\n{note}\n"""'},
+            {"role": "user", "content": f'Note:\n"""\n{note}\n"""{scope_context}'},
         ],
         response_format={"type": "json_object"},
         timeout=30,
