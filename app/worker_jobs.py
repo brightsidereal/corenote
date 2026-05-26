@@ -7,24 +7,37 @@ from app.consolidator import content_hash, is_duplicate
 from app.graph import add_fact_to_graph
 from app.logger import log
 
-def get_existing_scopes(user_id: str) -> list[str]:
-    """ดึง scopes ที่มีอยู่แล้วของ user"""
+def get_existing_topics(user_id: str) -> dict[str, list[str]]:
+    """
+    ดึง scope พร้อม sample facts ของแต่ละ scope
+    return: {"/work/q4": ["fact1", "fact2", "fact3"]}
+    """
     with get_conn() as con:
-        rows = con.execute(
-            "SELECT DISTINCT scope FROM facts WHERE user_id = %s ORDER BY scope",
-            (user_id,)
-        ).fetchall()
-    return [r[0] for r in rows]
+        rows = con.execute("""
+            SELECT scope, content
+            FROM facts
+            WHERE user_id = %s
+            ORDER BY scope, importance DESC
+        """, (user_id,)).fetchall()
+
+    topics: dict[str, list[str]] = {}
+    for scope, content in rows:
+        if scope not in topics:
+            topics[scope] = []
+        if len(topics[scope]) < 3:  # เก็บแค่ 3 ตัวอย่างต่อ scope
+            topics[scope].append(content)
+
+    return topics
 
 def process_ingest(note: str, user_id: str, raw_note_id: str):
     log.info("process_ingest_start", user_id=user_id, raw_note_id=raw_note_id)
 
-    # ดึง existing scopes ก่อน extract
-    existing_scopes = get_existing_scopes(user_id)
-    log.info("existing_scopes", count=len(existing_scopes), scopes=existing_scopes)
+    # ดึง existing topics พร้อม sample facts
+    existing_topics = get_existing_topics(user_id)
+    log.info("existing_topics", count=len(existing_topics))
 
-    # extract พร้อม context ของ scopes เดิม
-    facts = extract_facts(note, existing_scopes=existing_scopes)
+    # extract พร้อม context ของ topics เดิม
+    facts = extract_facts(note, existing_topics=existing_topics)
     saved, skipped = [], []
     now = datetime.now(timezone.utc).isoformat()
 

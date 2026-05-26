@@ -21,10 +21,11 @@ For each fact also estimate:
 - importance: 0.0-1.0
 - scope: short path like /work/q4 or /idea/product or /personal/health
 
-IMPORTANT — scope assignment rules:
-- If existing_scopes are provided, prefer reusing an existing scope when the content is related
-- Only create a new scope if the content is clearly different from all existing scopes
-- Use the most specific existing scope that matches
+SCOPE ASSIGNMENT RULES (follow strictly):
+- If existing_topics are provided, compare the new fact's meaning against the example facts in each topic
+- If the new fact is semantically similar to examples in an existing topic, USE that topic's scope
+- Only create a NEW scope if the content is clearly unrelated to ALL existing topics
+- When in doubt, prefer reusing an existing scope
 - Format: /category/topic (e.g. /work/q4, /personal/health, /idea/product)
 
 Return ONLY valid JSON, no markdown, no explanation:
@@ -44,19 +45,26 @@ Return ONLY valid JSON, no markdown, no explanation:
     wait=wait_exponential(multiplier=1, min=2, max=30),
     stop=stop_after_attempt(3),
 )
-def extract_facts(note: str, existing_scopes: list[str] = None) -> list[dict]:
+def extract_facts(note: str, existing_topics: dict[str, list[str]] = None) -> list[dict]:
+    """
+    existing_topics: {scope: [sample fact contents]}
+    เช่น {"/work/q4": ["ประชุม Q4 กับ Alex", "ต้องเตรียม deck"]}
+    """
     log.info("extract_facts", note_length=len(note))
 
-    scope_context = ""
-    if existing_scopes:
-        scope_context = f"\n\nexisting_scopes (prefer reusing these if content is related):\n" + \
-                       "\n".join(f"- {s}" for s in existing_scopes)
+    topic_context = ""
+    if existing_topics:
+        lines = []
+        for scope, samples in existing_topics.items():
+            sample_text = " | ".join(samples[:3])  # เอาแค่ 3 ตัวอย่างต่อ scope
+            lines.append(f"- {scope}: {sample_text}")
+        topic_context = "\n\nexisting_topics (scope: example facts — reuse if semantically similar):\n" + "\n".join(lines)
 
     response = client.chat.completions.create(
         model=settings.openai_model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f'Note:\n"""\n{note}\n"""{scope_context}'},
+            {"role": "user", "content": f'Note:\n"""\n{note}\n"""{topic_context}'},
         ],
         response_format={"type": "json_object"},
         timeout=30,
