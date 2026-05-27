@@ -104,7 +104,6 @@ def init_db():
             )
         """)
         con.execute("CREATE INDEX IF NOT EXISTS idx_facts_user_id ON facts(user_id)")
-        con.execute("CREATE INDEX IF NOT EXISTS idx_facts_episode ON facts(episode_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_facts_content_hash ON facts(user_id, content_hash)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(user_id, scope)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_facts_importance ON facts(user_id, importance DESC)")
@@ -121,5 +120,8 @@ def init_db():
         ]
         for table, col, definition in migrations:
             con.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {definition}")
+
+        # index ที่ต้องสร้างหลัง migration
+        con.execute("CREATE INDEX IF NOT EXISTS idx_facts_episode ON facts(episode_id)")
 
         con.commit()
